@@ -235,3 +235,98 @@ ggsave("../output/hhi_overview_fig.eps", plot=hhi_overview_plot,width=6.25, heig
 
 ## Write summary statistics tables
 write.csv(summ_stats_long, file="../output/summ_stats_tables.csv", row.names=T)
+
+##-----------------------------------------------------------##
+## Summary statistics for different asset types as percent of total
+##-----------------------------------------------------------##
+asset_side <- c("tradingassets", loans_vars, securities)
+call_reports_real_pctasst <- call_reports_real %>% 
+  mutate(across(all_of(asset_side), ~ ./assets),
+         date = as.Date(as.character(date), format="%Y%m%d"))
+
+# Remove banks with zero assets but reporting positive loans
+call_reports_real_pctasst <- call_reports_real_pctasst %>%
+  filter(!(rssdid==1831920 & date == as.Date("2005-06-30")) & 
+           !(rssdid==373106 & date ==as.Date("1977-09-30")) &
+           !(rssdid==466147 & date ==as.Date("1978-09-30")))
+
+summ_funcs <- set_names(list(mean = partial(mean, na.rm = TRUE),
+                             sd = partial(sd, na.rm = TRUE),
+                             min = partial(min, na.rm = TRUE),
+                             max = partial(max, na.rm = TRUE),
+                             median = partial(median, na.rm=TRUE),
+                             pct90 = partial(quantile, probs=0.9, na.rm=TRUE),
+                             pct10 = partial(quantile, probs=0.1, na.rm=TRUE),
+                             pct75 = partial(quantile, probs=0.75, na.rm=TRUE),
+                             pct25 = partial(quantile, probs=0.25, na.rm=TRUE)),
+                        nm = c("mean", "sd", "min", "max", "median",
+                               "pct90","pct10", "pct75", "pct25"))
+
+# Summary Statistics: BY QUARTER
+summ_stats_qtrly <- call_reports_real_pctasst %>% group_by(date) %>%
+  summarise(across(all_of(asset_side),
+                   summ_funcs))
+
+
+series_codes <- loans_vars
+series_names <- c("Real Estate Loans", "Personal Loans", "Agricultural Loans", 
+                  "C&I Loans", "Total Loans")
+
+plots <- list()
+
+for (i in 1:length(series_codes)) {
+  # Create a line plot for each variable
+  p <- ggplot(summ_stats_qtrly) +
+    geom_line(aes(x=date, y=!!sym(paste(series_codes[i], "mean", sep="_"))), color="black") +
+    geom_ribbon(aes(x=date, 
+                    ymin=!!sym(paste(series_codes[i], "pct90", sep="_")),
+                    ymax=!!sym(paste(series_codes[i], "pct10", sep="_"))), fill="gray", alpha=0.4) +
+    geom_ribbon(aes(x=date, 
+                    ymin=!!sym(paste(series_codes[i], "pct75", sep="_")),
+                    ymax=!!sym(paste(series_codes[i], "pct25", sep="_"))), fill="purple", alpha=0.2) +    
+    labs(title=series_names[i], x="Quarter", y= "% of Assets") +
+    theme_classic(base_size=8)
+  
+  plots[[i]] <- p
+}
+
+# Arrange the plots in a grid
+loans_plot <- ggarrange(plotlist = plots, ncol=2, nrow=3,common.legend=T)
+
+cairo_ps("../output/call_report_loans_fig.eps", width = 6.25, height = 4, pointsize = 12)
+print(loans_plot)
+dev.off()
+#ggsave("../output/call_report_loans_fan_fig.eps", plot=loans_plot,width=6.25, height=4, device="eps")
+
+
+##--------------------------------------------------##
+## Plot for securities
+series_codes <- securities
+series_names <- c("Total Securities", "Securities (Amortized Cost)", 
+                  "HTM Securities", "AFS Securities", "Fed Funds Repos")
+
+plots <- list()
+
+for (i in 1:length(series_codes)) {
+  # Create a line plot for each variable
+  p <- ggplot(summ_stats_qtrly) +
+    geom_line(aes(x=date, y=!!sym(paste(series_codes[i], "mean", sep="_"))), color="black") +
+    geom_ribbon(aes(x=date, 
+                    ymin=!!sym(paste(series_codes[i], "pct90", sep="_")),
+                    ymax=!!sym(paste(series_codes[i], "pct10", sep="_"))), fill="gray", alpha=0.4) +
+    geom_ribbon(aes(x=date, 
+                    ymin=!!sym(paste(series_codes[i], "pct75", sep="_")),
+                    ymax=!!sym(paste(series_codes[i], "pct25", sep="_"))), fill="purple", alpha=0.2) +    
+    labs(title=series_names[i], x="Quarter", y= "% of Assets") +
+    theme_classic(base_size=8)
+  
+  plots[[i]] <- p
+}
+
+# Arrange the plots in a grid
+sec_plot <- ggarrange(plotlist = plots, ncol=2, nrow=3,common.legend=T)
+
+cairo_ps("../output/call_report_securities_fig.eps", width = 6.25, height = 4, pointsize = 12)
+print(sec_plot)
+dev.off()
+#ggsave("../output/call_report_securities_fig.eps", plot=sec_plot,width=6.25, height=4, device="eps")

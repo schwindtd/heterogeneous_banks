@@ -1,6 +1,6 @@
 ########################################################
 # Heterogeneous Banks Research Project
-# Mahalanobis Distance
+# Mahalanobis Distance (to Mean)
 # Author: Daniel Schwindt
 # Date: 4/18/2023
 # Purpose: 
@@ -58,7 +58,7 @@ rcd_trad <- c("trad_assets_ustreas","trad_assets_derivs",
 rce_depo <- c("deposits_individ","deposits_commbnk",
               "deposits_forbnk","deposits_forinst")
 select_vars <- c(rc_assets, rc_liabs, rcb_secs, rcc_loans, rcd_trad, rce_depo)
-call <- call %>% filter(date==as.Date("2020-03-31")) %>% select(date, rssd_id, all_of(select_vars))
+call <- call %>% select(date, rssd_id, all_of(select_vars))
 
 ## Re-define variables as pct of assets or liabilities
 asset_side <- c(rc_assets[-4], rcb_secs, rcc_loans, rcd_trad)
@@ -73,56 +73,29 @@ call_pctasst <- call %>%
 #                     "liabs", "deposits", "trad_liabs")
 
 characteristics <- c("loans","trad_assets","deposits")
+dates <- call %>% filter(date >= as.Date("1994-03-31")) %>% 
+  select(date) %>% distinct() %>% deframe()
 
-call_mat <- call_pctasst %>% select(all_of(characteristics))
-call_mat <- as.matrix(call_mat)
-cov_mat <- cov(call_mat, use="pairwise.complete.obs")
-
-inv_cov_mat <- solve(cov_mat)
-
-##--------------------------------------------------------
-## PAIRWISE MAHALANOBIS DISTANCES
-##--------------------------------------------------------
-# Compute pairwise Mahalanobis distances
-mahal_dist_pair <- matrix(0, nrow = nrow(call_mat), ncol = nrow(call_mat))
-for (i in 1:nrow(call_mat)) {
-  for (j in 1:i) {
-    if (i == j) {
-      mahal_dist_pair[i, j] <- 0
-    } else {
-      mahal_dist_pair[i, j] <- sqrt((t(call_mat[i,]-call_mat[j,]) %*% inv_cov_mat %*% (call_mat[i,]-call_mat[j,])))
-    }
-  }
+mahal_dist_mean_ts <- c()
+mahal_dist_sd_ts <- c()
+for (i in 1:length(dates)){
+  # Compute covariance matrix
+  call_mat <- call_pctasst %>% filter(date == dates[i]) %>% select(all_of(characteristics))
+  call_mat <- as.matrix(call_mat)
+  cov_mat <- cov(call_mat, use="pairwise.complete.obs")
+  # Compute inverse covariance matrix
+  inv_cov_mat <- solve(cov_mat)
+  # Compute Mahalanobis Distance to mean for each bank
+  mahal_dist_mean <- sqrt(mahalanobis(call_mat, colMeans(call_mat, na.rm=T), inv_cov_mat))
+  # Summarize across banks to create aggregate values
+  mahal_dist_mean_ts <- c(mahal_dist_mean_ts, mean(mahal_dist_mean, na.rm=T))
+  mahal_dist_sd_ts <- c(mahal_dist_sd_ts, sd(mahal_dist_mean, na.rm=T))
 }
 
-mahal_dist_pair_full <- mahal_dist_pair + t(mahal_dist_pair)
-rand_select <- round(runif(n=10, min=1, max=nrow(mahal_dist_pair)))
-mahal_dist_pair_select <- mahal_dist_pair_full[rand_select, rand_select]
-g <- graph.adjacency(mahal_dist_pair_select, mode = "undirected", weighted = TRUE)
+heterog_ts <- data.frame(date = dates, mean = mahal_dist_mean_ts, sd = mahal_dist_sd_ts)
 
-# set labels for nodes
-V(g)$label <- 1:vcount(g)
+ggplot(heterog_ts) +
+  geom_line(aes(x=date, y=mean))
 
-# set node colors based on degree centrality
-#node_colors <- rev(heat.colors(10))
-#degree_centrality <- degree(g, mode = "all")
-#V(g)$color <- node_colors[cut(degree_centrality, breaks = 10)]
-
-# set edge colors based on weight
-#edge_colors <- heat.colors(10)
-#E(g)$color <- edge_colors[cut(E(g)$weight, breaks = 10)]
-E(g)$color <- "black"
-
-# plot graph
-# cairo_ps("../output/bank_similarity.eps", width = 6.25, height = 4, pointsize = 12)
-# plot(g, layout = layout.fruchterman.reingold, edge.width = 1/E(g)$weight,
-#      vertex.size = 20, vertex.label.cex = 0.8)
-# legend("topleft", legend=c("Bank", "Similarity"), col=c("orange", "black"), 
-#        pch=c(19, NA), lty=c(NA,1), pt.cex=c(1, 2), bty="n", cex=0.8)
-# dev.off()
-
-##--------------------------------------------------------
-## MAHALANOBIS DISTANCES to MEAN
-##--------------------------------------------------------
-mahal_dist_mean <- sqrt(mahalanobis(call_mat, colMeans(call_mat, na.rm=T), inv_cov_mat))
-mean(mahal_dist_mean, na.rm=T)
+# ggplot(heterog_ts) +
+#   geom_line(aes(x=date, y=sd))

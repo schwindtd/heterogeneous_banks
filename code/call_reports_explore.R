@@ -19,32 +19,23 @@ library(lubridate)
 library(gganimate)
 
 ## 1. Load data
-rcfd <- read_csv("../data/call_reports_wrds_rcfd_1976q1-2020q3.csv")
-rcon <- read_csv("../data/call_reports_wrds_rcon_1976q1-2020q3.csv")
+call <- read_csv("../data/callreports_1976_2020.csv")
 
 # Check for duplicates
-rcfd_dup_check <- rcfd %>% mutate(dups = 1) %>% group_by(RSSD9001, RSSD9999) %>%
-  summarise(dups = sum(dups, na.rm=T))
-rcon_dup_check <- rcon %>% mutate(dups=1) %>% group_by(RSSD9001, RSSD9999) %>%
+dup_check <- call %>% mutate(dups = 1) %>% group_by(RSSD9001, RSSD9999) %>%
   summarise(dups = sum(dups, na.rm=T))
 
 # Drop duplicates
 # Sort by assets and then drop the lowest one
-rcfd <- rcfd %>% arrange(RSSD9001, RSSD9999, desc(RCFD2170)) %>%
+call <- call %>% arrange(RSSD9001, RSSD9999, desc(RCFD2170)) %>%
   distinct(RSSD9001, RSSD9999, .keep_all = TRUE)
-
-rcon <- rcon %>% arrange(RSSD9001, RSSD9999, desc(RCON2170)) %>%
-  distinct(RSSD9001, RSSD9999, .keep_all = TRUE)
-
-## 2. Merge datasets on RSSD ID: RSSD9001
-call <- left_join(rcfd, rcon, by=c("RSSD9001", "RSSD9999"))
 
 # check duplicates
 dups_check <- call %>% mutate(dups = 1) %>% group_by(RSSD9001, RSSD9999) %>% 
   summarise(dups = sum(dups, na.rm=T))
 dups_check %>% filter(dups > 1) %>% count() # no duplicates
 
-rm(rcfd, rcon, rcfd_dup_check, rcon_dup_check)
+rm(dup_check, dups_check)
 
 ## 3. Re-name variables
 call_name_changes <- c("RCFD0010"="cash_bal_due_depo","RCFD1287"="us_treas_afs",
@@ -62,9 +53,9 @@ call_name_changes <- c("RCFD0010"="cash_bal_due_depo","RCFD1287"="us_treas_afs",
 "RCFDG327"="cmbs_pt_afs","RCFDG379"="trad_assets_rmbs_agency_pt",
 "RCFDG386"="trad_assets_debt_other_other","RCFDG820"="rmbs_other_htm",
 "RCFD0211"="us_treas_htm","RCFD1288"="loans_depo_acc",
-"RCFD1420"="loans_re_farm","RCFD1563"="loans_nondepoother",
+"RCFD1420"="loans_re_farm","RCFD1480"="loans_re_nonfarm_nonresi","RCFD1563"="loans_nondepoother",
 "RCFD1763"="loans_ci_dom","RCFD1773"="sec_afs",
-"RCFD1797"="loans_re_resi_revolv","RCFD2107"="loans_muni_oblig",
+"RCFD1430"="loans_re_resi","RCFD2107"="loans_muni_oblig",
 "RCFD2130"="invest_uncon_sub","RCFD2160"="other_assets",
 "RCFD2190"="deposits_forbnk","RCFD2930"="other_liabs",
 "RCFD3190"="other_borr_money","RCFD3532"="trad_assets_agency_nonmbs",
@@ -106,6 +97,7 @@ call <- call %>%
               .cols = names(call))
 
 call <- call %>% mutate(date = as.Date(as.character(date),format="%Y%m%d"))
+saveRDS(call, file="../data/callreports_1976_2020.rds")
 
 # Create name vectors for each type of variable
 rc_assets <- c("cash_bal_due_depo","int_assets","other_assets","assets",
@@ -125,8 +117,8 @@ rcb_secs <- c("us_treas_htm","us_treas_afs","munis_htm","munis_afs",
               "rmbs_pt_sec_3y_5y","rmbs_pt_sec_5y_15y","rmbs_pt_sec_gt15y",
               "mbs_other_lt3y","mbs_other_gt3y","sec_lt1y")
 rcc_loans <- c("lease_fin_receive","loans_less_unearn_inc","loans_re",
-               "loans_re_cld","loans_re_farm","loans_re_resi_revolv",
-               "loans_re_multifam","loans_depo_acc",
+               "loans_re_cld","loans_re_farm","loans_re_resi",
+               "loans_re_multifam","loans_re_nonfarm_nonresi","loans_depo_acc",
                "loans_depo_acc_commbnk","loans_depo_acc_otherdepo",
                "loans_depo_acc_for","loans_agprod","loans_ci","loans_ci_dom","loans_ci_for",
                "loans_individ_cardrevolv","loans_individ_autoothercons","loans_individ_card",
@@ -195,6 +187,11 @@ assets_by_type_plot <- ggplot(data=filter(entity_types_qtrly, charter_type %in% 
   labs(x="Date", y="Percent of Total Assets", color="Bank Type") +
   theme_classic(base_size=8)
 
+# Arrange into grid and save to output
+entity_type_plots <- ggarrange(plotlist = list(nums_by_type_plot, assets_by_type_plot), ncol=2, nrow=1,common.legend=T)
+ggsave("../output/call_report_entity_types.eps", plot=entity_type_plots,width=6.25, height=4, device="eps")
+
+
 # Breakdown of entity types across all quarters
 entity_types <- entity_types_qtrly %>% ungroup() %>% group_by(charter_type) %>%
   summarise(n=sum(n), assets=sum(assets)) %>% 
@@ -208,27 +205,47 @@ write.csv(entity_types, file="../output/entity_types_full.csv", row.names=F)
 
 # Asset Histograms
 asset_dist_2020q1 <- call %>% filter(assets > 0 & date==as.Date("2020-03-31")) %>% ggplot(aes(x=assets)) +
-  geom_histogram(aes(y=..density..), binwidth=100000000, color="black", fill="white") +
-  #scale_x_continuous(breaks=seq(min(assets), max(assets), by=binwidth))
-  theme_minimal()
+  geom_histogram(aes(y=..density..), binwidth=10000000, color="black", fill="white") +
+  labs(x="Assets ($K)", y="Density", title="2020:Q1") +
+  theme_classic(base_size=8)
 asset_dist_2016q1 <- call %>% filter(assets > 0 & date==as.Date("2016-03-31")) %>% ggplot(aes(x=assets)) +
-  geom_histogram(aes(y=..density..), binwidth=100000000, color="black", fill="white") +
-  #scale_x_continuous(breaks=seq(min(assets), max(assets), by=binwidth))
-  theme_minimal()
+  geom_histogram(aes(y=..density..), binwidth=10000000, color="black", fill="white") +
+  labs(x="Assets ($K)", y="Density", title="2016:Q1") +
+  theme_classic(base_size=8)
 asset_dist_2012q1 <- call %>% filter(assets > 0 & date==as.Date("2012-03-31")) %>% ggplot(aes(x=assets)) +
-  geom_histogram(aes(y=..density..), binwidth=100000000, color="black", fill="white") +
-  #scale_x_continuous(breaks=seq(min(assets), max(assets), by=binwidth))
-  theme_minimal()
+  geom_histogram(aes(y=..density..), binwidth=10000000, color="black", fill="white") +
+  labs(x="Assets ($K)", y="Density", title="2012:Q1") +
+  theme_classic(base_size=8)
 asset_dist_2008q1 <- call %>% filter(assets > 0 & date==as.Date("2008-03-31")) %>% ggplot(aes(x=assets)) +
   geom_histogram(aes(y=..density..), binwidth=10000000, color="black", fill="white") +
-  #scale_x_continuous(breaks=seq(min(assets), max(assets), by=binwidth))
-  theme_minimal()
+  labs(x="Assets ($K)", y="Density", title="2008:Q1") +
+  theme_classic(base_size=8)
+# Arrange into grid and save to output
+asset_dist_list <- list(asset_dist_2008q1, asset_dist_2012q1, asset_dist_2016q1, asset_dist_2020q1)
+assets_distrib_plots <- ggarrange(plotlist = asset_dist_list, ncol=2, nrow=2,common.legend=T)
+ggsave("../output/call_report_asset_dist_time.eps", plot=assets_distrib_plots,width=6.25, height=4, device="eps")
 
+# Time series of assets (mean and SD)
 summ_assets <- call %>% filter(assets > 0 & charter_type ==200) %>% 
   group_by(date) %>%
   summarise(sd = sd(assets, na.rm=T),
-            mean = mean(assets, na.rm=T))
-ggplot(data=summ_assets) +
+            mean = mean(assets, na.rm=T),
+            pct90 = quantile(assets,probs=0.90, na.rm=T),
+            pct10 = quantile(assets, probs=0.10, na.rm=T),
+            pct75 = quantile(assets, probs=0.75, na.rm=T),
+            pct25 = quantile(assets, probs=0.25, na.rm=T))
+
+# Plot Nominal Assets
+assets_plot <- ggplot(data=summ_assets) +
   geom_line(aes(x=date, y=mean), color="black") +
-  geom_line(aes(x=date, y=sd), color="red")
-                y=sd))
+  #geom_line(aes(x=date, y=sd), color="red") +
+  geom_ribbon(aes(x=date, ymin=pct10, ymax=pct90), fill="gray", alpha=0.4) + 
+  geom_ribbon(aes(x=date, ymin=pct25, ymax=pct75), fill="purple", alpha=0.2) +
+  labs(x="Date", y="$K", title="Commercial Bank Assets by Quarter") +
+  theme_classic(base_size=8)
+
+# Save plot to output
+cairo_ps("../output/call_report_nominalassets.eps", width = 6.25, height = 4, pointsize = 12)
+print(assets_plot)
+dev.off()
+#ggsave("../output/call_report_nominalassets.eps", plot=assets_plot,width=6.25, height=4, device="eps")
