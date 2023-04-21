@@ -89,12 +89,13 @@ for (i in 1:length(dates)){
   inv_cov_mat <- solve(cov_mat)
   # Compute pairwise distances
   mahal_dist <- mahalanobis_pairwise(call_mat, inv_cov_mat)
+  print(paste("Iteration:", i, "Mahalanobis Distances computed for", dates[i], sep=" "))
+  
   # Compute aggregate stats from pairwise
   m <- mean(mahal_dist, na.rm=T)
   s <- sd(mahal_dist, na.rm=T)
   mahal_dist_mean_ts <- c(mahal_dist_mean_ts, m)
   mahal_dist_sd_ts <- c(mahal_dist_sd_ts, s)
-  
 }
 
 heterog_ts <- data.frame(date=dates, mean=mean, sd=sd)
