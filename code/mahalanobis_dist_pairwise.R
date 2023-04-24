@@ -20,11 +20,25 @@ library(gganimate)
 library(visNetwork)
 library(igraph)
 library(scatterplot3d)
+library(proxy)
+library(doParallel)
+library(moments)
+library(tis)
+library(fredr)
 
-source("mahalanobis_pairwise_func.r")
+# Source needed functions
+source("./helper_funcs.R")
+
+## Set up cluster for parallelization (Method 3)
+cl <- parallel::makeCluster(detectCores())
+# Activate cluster
+doParallel::registerDoParallel(cl)
 
 ## 1. Load data
 call <- readRDS("../data/callreports_1976_2020.rds")
+
+macro_series_daily7 <- read_excel("../data/Bank_Runs_MacroSeries.xls", sheet="Daily,_7-Day", 
+                                  col_types = c("date", rep("numeric",5)))
 
 ## 2. Subset data for testing
 rc_assets <- c("cash_bal_due_depo","int_assets","other_assets","assets",
@@ -62,7 +76,7 @@ rce_depo <- c("deposits_individ","deposits_commbnk",
 select_vars <- c(rc_assets, rc_liabs, rcb_secs, rcc_loans, rcd_trad, rce_depo)
 call <- call %>% select(date, rssd_id, all_of(select_vars))
 
-## Re-define variables as pct of assets or liabilities
+## 3. Re-define variables as pct of assets or liabilities
 asset_side <- c(rc_assets[-4], rcb_secs, rcc_loans, rcd_trad)
 liabs_side <- c(rc_liabs[-6], rce_depo)
 
@@ -71,37 +85,85 @@ call_pctasst <- call %>%
          across(all_of(liabs_side), ~./liabs) )
 
 ## Select elements for each characteristic vector
-#characteristics <- c("assets", "loans", "trad_assets",
-#                     "liabs", "deposits", "trad_liabs")
-
-characteristics <- c("loans","trad_assets","deposits")
+#characteristics <- c("loans","trad_assets","deposits")
+characteristics <- c("loans", "loans_ci",
+                     "us_treas", "munis","pledge_sec",
+                     "deposits")
 dates <- call %>% filter(date >= as.Date("1994-03-31")) %>% 
   select(date) %>% distinct() %>% deframe()
 
-mahal_dist_mean_ts <- c()
-mahal_dist_sd_ts <- c()
+#mahal_dist_summ <- matrix(ncol=4, nrow=length(dates))
+dist_mean <- c()
+dist_sd <- c()
+dist_skew <- c()
+dist_kurtosis <- c()
+# Loop to compute summary statistics on similarity
+#foreach (i= 1:length(dates), .packages=c("tidyverse", "proxy", "moments")) %dopar% {
 for (i in 1:length(dates)){
-  # Compute covariance matrix
+  # Prepare data for distance function
   call_mat <- call_pctasst %>% filter(date == dates[i]) %>% select(all_of(characteristics))
   call_mat <- as.matrix(call_mat)
-  cov_mat <- cov(call_mat, use="pairwise.complete.obs")
-  # Compute inverse covariance matrix
-  inv_cov_mat <- solve(cov_mat)
   # Compute pairwise distances
-  mahal_dist <- mahalanobis_pairwise(call_mat, inv_cov_mat)
-  print(paste("Iteration:", i, "Mahalanobis Distances computed for", dates[i], sep=" "))
-  
+  mahal_dist <- proxy::as.matrix(proxy::dist(call_mat, method="Euclidean"))
   # Compute aggregate stats from pairwise
-  m <- mean(mahal_dist, na.rm=T)
-  s <- sd(mahal_dist, na.rm=T)
-  mahal_dist_mean_ts <- c(mahal_dist_mean_ts, m)
-  mahal_dist_sd_ts <- c(mahal_dist_sd_ts, s)
+  dist_mean <- c(dist_mean, mean(mahal_dist, na.rm=T))
+  dist_sd <- c(dist_sd, sd(mahal_dist, na.rm=T))
+  dist_skew <- c(dist_skew, skewness(colMeans(mahal_dist, na.rm=T), na.rm=T))
+  dist_kurtosis <- c(dist_kurtosis, kurtosis(colMeans(mahal_dist, na.rm=T), na.rm=T))
 }
 
-heterog_ts <- data.frame(date=dates, mean=mean, sd=sd)
+parallel::stopCluster(cl) # Stop cluster
 
-ggplot(heterog_ts) +
-  geom_line(aes(x=date, y=mean))
+# Create dataframe with summary statistics
+heterog_ts <- data.frame(date=dates, mean=dist_mean, sd=dist_sd, 
+                         skew=dist_skew, kurtosis=dist_kurtosis)
 
-ggplot(heterog_ts) +
-  geom_line(aes(x=date, y=mean))
+# Plot aggregate bank heterogeneity
+recessions <- data.frame(nberDates())
+recessions <- recessions %>% 
+  mutate(Start = as.Date(as.character(Start), format="%Y%m%d"),
+         End = as.Date(as.character(End), format="%Y%m%d")) %>%
+  filter(Start >=dates[1])
+
+ggp <- ggplot(heterog_ts, aes(x=date, y=mean)) +
+  geom_line() + 
+  annotate("rect", xmin=recessions$Start, xmax=recessions$End, ymin=-Inf, ymax=Inf, alpha=0.2) +
+  labs(x="Date", y="Distance (Pairwise)", title="Aggregate Bank Heterogeneity") +
+  theme_classic(base_size=8)
+
+## Plot Federal Funds rate
+ffr <- macro_series_daily7 %>% 
+  mutate(qtrdate = lubridate::quarter(DATE, with_year=T), qtr=lubridate::quarter(DATE)) %>%
+  group_by(qtrdate, qtr) %>% 
+  summarise(ffr_mean = mean(DFF, na.rm=T),
+            ffr_med = median(DFF, na.rm=T),
+            ffr_max = max(DFF, na.rm=T),
+            ffr_min = min(DFF, na.rm=T)) %>%
+  mutate(year = floor(qtrdate),
+         month = qtr*3,
+         day = case_when(
+           month < 6  ~ 31,
+           month >= 6 & month < 9 ~ 30,
+           month >= 9 & month < 12 ~ 30,
+           TRUE ~ 31
+         ),
+         date = lubridate::ymd(paste(year, month, day, sep = "-"))
+  )
+
+xlimits = c(min(dates), max(dates))
+ffr_plot <- ggplot(data=ffr) +
+  geom_line(aes(x=date, y=ffr_mean), color="black") + 
+  geom_ribbon(aes(x=date, ymin=ffr_min, ymax=ffr_max), 
+              fill="purple", alpha=0.2) +
+  scale_x_date(limits=xlimits) + 
+  scale_y_continuous(limits=c(0,10)) +
+  labs(x="Date", y="Percent", title="Federal Funds Rate") +
+  annotate("rect", xmin=recessions$Start, xmax=recessions$End, ymin=-Inf, ymax=Inf, alpha=0.2) +
+  theme_classic(base_size=8)
+
+## Combine Heterogeneity and interest rate charts
+plot_list <- list(ggp, ffr_plot)
+heterog_plots <- ggarrange(plotlist = plot_list, ncol=1, nrow=2)
+cairo_ps("../output/bank_heterogeneity_pairwise.eps", width = 6.25, height = 4, pointsize = 12)
+print(heterog_plots)
+dev.off()
