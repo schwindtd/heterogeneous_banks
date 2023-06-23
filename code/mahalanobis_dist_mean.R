@@ -84,13 +84,18 @@ liabs_side <- c(rc_liabs[-6], rce_depo)
 
 call_pctasst <- call %>% 
   mutate(across(all_of(asset_side), ~ ./assets),
-         across(all_of(liabs_side), ~./liabs) )
+         across(all_of(liabs_side), ~./liabs),
+         logassets = log(assets)) %>%
+  filter(assets > 0 & liabs > 0)
 
 ## Select elements for each characteristic vector
 #characteristics <- c("loans","trad_assets","deposits")
 #characteristics <- c(rc_assets, rc_liabs, rcb_secs, rcc_loans, rcd_trad, rce_depo)
-characteristics <- c("loans", "loans_ci",
-                     "us_treas", "munis","pledge_sec",
+characteristics <- c("logassets", 
+                     "loans",
+                     "loans_ci",
+                     "us_treas",
+                     "munis", "pledge_sec",
                      "deposits")
 dates <- call %>% filter(date >= as.Date("1994-03-31")) %>% 
   select(date) %>% distinct() %>% deframe()
@@ -101,13 +106,11 @@ for (i in 1:length(dates)){
   # Compute covariance matrix
   call_mat <- call_pctasst %>% filter(date == dates[i]) %>% select(all_of(characteristics))
   call_mat <- as.matrix(call_mat)
-  # Change NAs to 0 for distance calculation
-  call_mat[is.na(call_mat)] <- 0
-  cov_mat <- cov(call_mat, use="pairwise.complete.obs")
-  # Compute inverse covariance matrix
+  # Compute covariance matrix
+  cov_mat <- cov(call_mat, use="complete.obs") #use="pairwise.complete.obs")
   inv_cov_mat <- solve(cov_mat)
   # Compute Mahalanobis Distance to mean for each bank
-  mahal_dist_mean <- sqrt(mahalanobis(call_mat, colMeans(call_mat, na.rm=T), inv_cov_mat))
+  mahal_dist_mean <- sqrt(mahalanobis(call_mat, colMeans(call_mat, na.rm=T), inv_cov_mat, inverted=TRUE))
   # Summarize across banks to create aggregate values
   mahal_dist_mean_ts <- c(mahal_dist_mean_ts, mean(mahal_dist_mean, na.rm=T))
   mahal_dist_sd_ts <- c(mahal_dist_sd_ts, sd(mahal_dist_mean, na.rm=T))
@@ -227,12 +230,12 @@ x_irf <- seq(1:51)-1
 # y_maxs <- c(0.5, 2, 0.75, 0.0003)
 y_names <- c("Log Real GDP", "Log CPI", "FFR", "Heterogeneity")
 chart_names <- c("lgdp", "lcpi", "ffr", "heterog")
-y_mins <- c(-0.01, -0.01, -0.5, -0.0004)
-y_maxs <- c(0.02, 0.02, 0.75, 0.001)
+y_mins <- c(-0.01, -0.01, -0.5, -0.004)
+y_maxs <- c(0.02, 0.02, 0.75, 0.01)
 
 # Orthogonal responses to FFR, INFL, GDP GR
 for (i in 1:3){
-  cairo_ps(paste("../output/irfs_", chart_names[i],".eps", sep=""), width = 6.25, height = 6.25, pointsize = 12)
+  cairo_ps(paste("../output/irfs_mahalanobis", chart_names[i],".eps", sep=""), width = 6.25, height = 6.25, pointsize = 12)
   par(mfrow=c(2,2), mar = c(4,4,2,2))
   for (j in 1:4){
     graphics::plot(x=x_irf,y=irfs$irf[[i]][,j], type="l", xlab="Quarters", ylab=y_names[j], ylim=c(y_mins[j], y_maxs[j]))
@@ -243,9 +246,9 @@ for (i in 1:3){
 }
 
 # Orthogonal responses to Heterogeneity
-y_mins <- c(-0.01,-0.01, -0.5, -0.0003)
-y_maxs <- c(0.02, 0.02, 0.5, 0.001)
-cairo_ps(paste("../output/irfs_", y_names[4],".eps", sep=""), width = 6.25, height = 6.25, pointsize = 12)
+y_mins <- c(-0.01,-0.01, -0.5, -0.003)
+y_maxs <- c(0.02, 0.02, 0.5, 0.003)
+cairo_ps(paste("../output/irfs_mahalanobis", y_names[4],".eps", sep=""), width = 6.25, height = 6.25, pointsize = 12)
 par(mfrow=c(2,2), mar = c(4,4,2,2))
 for (j in 1:4){
   graphics::plot(x=x_irf,y=irfs$irf[[4]][,j], type="l", xlab="Quarters", ylab=y_names[j], ylim=c(y_mins[j], y_maxs[j]))
