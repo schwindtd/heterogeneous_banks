@@ -1,9 +1,11 @@
 ########################################################
 # Heterogeneous Banks Research Project
-# Call Reports
+# Call Reports - Data creation and data checks
 # Author: Daniel Schwindt
 # Date: 4/1/2023
-# Purpose: 
+# Date Updated: 6/12/2023
+# Purpose: To construct consistent time series from Call
+#          Report data (1976:Q1 - 2020:Q3)
 ########################################################
 
 ## 0. Housekeeping
@@ -97,7 +99,6 @@ call <- call %>%
               .cols = names(call))
 
 call <- call %>% mutate(date = as.Date(as.character(date),format="%Y%m%d"))
-saveRDS(call, file="../data/callreports_1976_2020.rds")
 
 # Create name vectors for each type of variable
 rc_assets <- c("cash_bal_due_depo","int_assets","other_assets","assets",
@@ -132,8 +133,79 @@ rcd_trad <- c("trad_assets_ustreas","trad_assets_derivs",
               "trad_assets_other","trad_liabs_short","trad_liabs_derivs")
 rce_depo <- c("deposits_individ","deposits_commbnk",
               "deposits_forbnk","deposits_forinst")
-
 bal_vars <- c(rc_assets, rc_liabs, rcb_secs, rcc_loans, rcd_trad, rce_depo)
+
+## Test for series which become less reported over time
+missing_loans <- call %>% group_by(date) %>%
+  summarise(across(all_of(rcc_loans), ~ sum(is.na(.)), .names = "n_missing_{.col}"))
+missing_secs <- call %>% group_by(date) %>%
+  summarise(across(all_of(rcb_secs), ~ sum(is.na(.)), .names = "n_missing_{.col}"))
+
+## Fill in missing loan and securities variables caused by reporting changes
+call_full <- call %>%
+  mutate(loans_re_cld = ifelse(is.na(loans_re_cld) & date >= as.Date("2011-03-31", "%Y-%m-%d"),
+                               RCFDF158 + RCFDF159,
+                               loans_re_cld),
+         loans_re_resi = ifelse(is.na(loans_re_resi) & date >= as.Date("2011-03-31", "%Y-%m-%d"),
+                                RCFD1797 + RCFD5367 + RCFD5368,
+                                loans_re_resi),
+         loans_re_nonfarm_nonresi = ifelse(is.na(loans_re_nonfarm_nonresi) & date >= as.Date("2011-03-31", "%Y-%m-%d"),
+                                           RCFDF160 + RCFDF161,
+                                           loans_re_nonfarm_nonresi),
+         loans_re = ifelse(is.na(loans_re) & date >= as.Date("2011-03-31", "%Y-%m-%d"),
+                           loans_re_cld + loans_re_farm + loans_re_resi + loans_re_multifam + loans_re_nonfarm_nonresi,
+                           loans_re),
+         loans_individ_cardrevolv = ifelse(is.na(loans_individ_cardrevolv) & date >= as.Date("2011-03-31", "%Y-%m-%d"),
+                                           loans_individ_card + loans_individ_otherrevolv,
+                                           loans_individ_cardrevolv),
+         loans_individ_autoothercons = ifelse(is.na(loans_individ_autoothercons) & date >= as.Date("2011-03-31", "%Y-%m-%d"),
+                                              RCFDK137 + RCFDK207,
+                                              loans_individ_autoothercons),
+         loans_personal = loans_individ_cardrevolv + loans_individ_autoothercons,
+         loans_nondepoother = loans_nondepo + loans_nondepoother_other,
+         rmbs_pt_htm = ifelse(is.na(rmbs_pt_htm) & date >= as.Date("2011-03-31", "%Y-%m-%d"),
+                              RCFDG300+RCFDG304+RCFDG308,
+                              rmbs_pt_htm),
+         rmbs_pt_afs = ifelse(is.na(rmbs_pt_afs) & date >= as.Date("2011-03-31", "%Y-%m-%d"),
+                              RCFDG303+RCFDG307+RCFDG311,
+                              rmbs_pt_afs),
+         rmbs_other_htm = ifelse(is.na(rmbs_other_htm) & date >= as.Date("2011-03-31", "%Y-%m-%d"),
+                                 RCFDG312+RCFDG316+RCFDG320,
+                                 rmbs_other_htm),
+         rmbs_other_afs = ifelse(is.na(rmbs_other_afs) & date >= as.Date("2011-03-31", "%Y-%m-%d"),
+                                 RCFDG315+RCFDG319+RCFDG323,
+                                 rmbs_other_afs),
+         cmbs_pt_htm = ifelse(is.na(cmbs_pt_htm) & date >= as.Date("2011-03-31", "%Y-%m-%d"),
+                              RCFDK142+RCFDK146,
+                              cmbs_pt_htm),
+         cmbs_pt_afs = ifelse(is.na(cmbs_pt_afs) & date >= as.Date("2011-03-31", "%Y-%m-%d"),
+                              RCFDK145+RCFDK149,
+                              cmbs_pt_afs),
+         cmbs_other_htm = ifelse(is.na(cmbs_other_htm) & date >= as.Date("2011-03-31", "%Y-%m-%d"),
+                                 RCFDK150+RCFDK154,
+                                 cmbs_other_htm),
+         cmbs_other_afs = ifelse(is.na(cmbs_other_afs) & date >= as.Date("2011-03-31", "%Y-%m-%d"),
+                                 RCFDK153+RCFDK157,
+                                 cmbs_other_afs),
+         other_debt_htm = ifelse(is.na(other_debt_htm) & date >= as.Date("2011-03-31", "%Y-%m-%d"),
+                                 RCFD1737+RCFD1742,
+                                 other_debt_htm),
+         other_debt_afs = ifelse(is.na(other_debt_afs) & date >= as.Date("2011-03-31", "%Y-%m-%d"),
+                                 RCFD1741+RCFD1746,
+                                 other_debt_afs)
+         )
+
+## Check above resolves issues for real estate & personal
+## RMBS Passthrough - HTM and AFS still has large # of dropouts starting in 2018:Q2
+## Checked vs. raw data files and the dropouts occur there as well
+missing_loan_check <- call_full %>% group_by(date) %>%
+  summarise(across(all_of(rcc_loans), ~ sum(is.na(.)), .names = "n_missing_{.col}"))
+missing_secs_check <- call_full %>% group_by(date) %>%
+  summarise(across(all_of(rcb_secs), ~ sum(is.na(.)), .names = "n_missing_{.col}"))
+
+## SAVE FULL DATASET
+rm(call)
+saveRDS(call_full, file="../data/callreports_1976_2020.rds")
 
 ## 4. Summary Statistics (Levels)
 summ_funcs <- set_names(list(mean = partial(mean, na.rm = TRUE),
@@ -143,7 +215,7 @@ summ_funcs <- set_names(list(mean = partial(mean, na.rm = TRUE),
                              n = function(x) sum(!is.na(x))),
                         nm = c("mean", "sd", "min", "max", "n"))
 # Full sample descriptive statistics
-summ_stats <- call %>% summarise(across(all_of(bal_vars),summ_funcs))
+summ_stats <- call_full %>% summarise(across(all_of(bal_vars),summ_funcs))
 # Convert from wide format to long
 summ_stats_long <- pivot_longer(data = summ_stats,
                                 cols = everything(),
@@ -154,12 +226,12 @@ write.csv(summ_stats_long, file="../output/summ_stats_full.csv", row.names=F)
 
 ## 5. Summary Statistics over Time
 # How many entities per quarter?
-nobs <- call %>% group_by(date) %>%
+nobs <- call_full %>% group_by(date) %>%
   summarise(n = n())
 ggplot(data=nobs, aes(x=date, y=n)) + geom_line()
 
 # What types of entities in the data (by quarter)?
-entity_types_qtrly <- call %>% group_by(date, charter_type) %>%
+entity_types_qtrly <- call_full %>% group_by(date, charter_type) %>%
   summarise(n=n(), assets = sum(assets, na.rm=T)) %>%
   mutate(total_n = sum(n, na.rm=T),
          total_assets = sum(assets, na.rm=T),
@@ -204,19 +276,19 @@ entity_types <- entity_types_qtrly %>% ungroup() %>% group_by(charter_type) %>%
 write.csv(entity_types, file="../output/entity_types_full.csv", row.names=F)
 
 # Asset Histograms
-asset_dist_2020q1 <- call %>% filter(assets > 0 & date==as.Date("2020-03-31")) %>% ggplot(aes(x=assets)) +
+asset_dist_2020q1 <- call_full %>% filter(assets > 0 & date==as.Date("2020-03-31")) %>% ggplot(aes(x=assets)) +
   geom_histogram(aes(y=..density..), binwidth=10000000, color="black", fill="white") +
   labs(x="Assets ($K)", y="Density", title="2020:Q1") +
   theme_classic(base_size=8)
-asset_dist_2016q1 <- call %>% filter(assets > 0 & date==as.Date("2016-03-31")) %>% ggplot(aes(x=assets)) +
+asset_dist_2016q1 <- call_full %>% filter(assets > 0 & date==as.Date("2016-03-31")) %>% ggplot(aes(x=assets)) +
   geom_histogram(aes(y=..density..), binwidth=10000000, color="black", fill="white") +
   labs(x="Assets ($K)", y="Density", title="2016:Q1") +
   theme_classic(base_size=8)
-asset_dist_2012q1 <- call %>% filter(assets > 0 & date==as.Date("2012-03-31")) %>% ggplot(aes(x=assets)) +
+asset_dist_2012q1 <- call_full %>% filter(assets > 0 & date==as.Date("2012-03-31")) %>% ggplot(aes(x=assets)) +
   geom_histogram(aes(y=..density..), binwidth=10000000, color="black", fill="white") +
   labs(x="Assets ($K)", y="Density", title="2012:Q1") +
   theme_classic(base_size=8)
-asset_dist_2008q1 <- call %>% filter(assets > 0 & date==as.Date("2008-03-31")) %>% ggplot(aes(x=assets)) +
+asset_dist_2008q1 <- call_full %>% filter(assets > 0 & date==as.Date("2008-03-31")) %>% ggplot(aes(x=assets)) +
   geom_histogram(aes(y=..density..), binwidth=10000000, color="black", fill="white") +
   labs(x="Assets ($K)", y="Density", title="2008:Q1") +
   theme_classic(base_size=8)
@@ -226,7 +298,7 @@ assets_distrib_plots <- ggarrange(plotlist = asset_dist_list, ncol=2, nrow=2,com
 ggsave("../output/call_report_asset_dist_time.eps", plot=assets_distrib_plots,width=6.25, height=4, device="eps")
 
 # Time series of assets (mean and SD)
-summ_assets <- call %>% filter(assets > 0 & charter_type ==200) %>% 
+summ_assets <- call_full %>% filter(assets > 0 & charter_type ==200) %>% 
   group_by(date) %>%
   summarise(sd = sd(assets, na.rm=T),
             mean = mean(assets, na.rm=T),

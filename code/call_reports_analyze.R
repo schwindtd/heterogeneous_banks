@@ -75,10 +75,15 @@ call_reports_real <- call_reports %>% mutate(across(all_of(summ_vars), ~ . / cpi
 
 ## 3. Summary statistics
 summ_funcs <- set_names(list(mean = partial(mean, na.rm = TRUE),
+                             median = partial(median, na.rm=TRUE),
                              sd = partial(sd, na.rm = TRUE),
                              min = partial(min, na.rm = TRUE),
-                             max = partial(max, na.rm = TRUE)),
-                        nm = c("mean", "sd", "min", "max"))
+                             max = partial(max, na.rm = TRUE),
+                             p10 = function(x) quantile(x, probs = 0.1, na.rm = TRUE),
+                             p25 = function(x) quantile(x, probs=0.25, na.rm=TRUE),
+                             p75 = function(x) quantile(x, probs=0.75, na.rm=TRUE),
+                             p90 = function(x) quantile(x, probs=0.9, na.rm=TRUE)),
+                        nm = c("mean", "median", "sd", "min", "max", "p10", "p25", "p75", "p90"))
 # Summary Statistics: ALL OBSERVATIONS
 summ_stats <- call_reports_real %>% summarise(across(all_of(summ_vars),
                                                      summ_funcs))
@@ -107,9 +112,18 @@ n_plot <- ggplot(data=summ_stats_qtrly, aes(x=date, y=n)) +
   theme_classic(base_size=8)
 
 avg_totalassets_plot <- ggplot(data=summ_stats_qtrly) +
-  geom_line(aes(x=date, y=assets_mean), color="black") +
-  labs(title="Total Assets (Mean)", x="Date (Qtrly)", y="$ (Real)") + 
+  geom_line(aes(x=date, y=log(assets_mean), color="Mean")) +
+  geom_line(aes(x=date, y=log(assets_median), color="Median")) +
+  geom_ribbon(aes(x=date, ymin=log(assets_p10), ymax=log(assets_p90)), fill="gray", alpha=0.4) +
+  geom_ribbon(aes(x=date, ymin=log(assets_p25), ymax=log(assets_p75)), fill="purple", alpha=0.2) +
+  labs(title="Log Assets", x="Date (Qtrly)", y="$ (Real)") + 
+  scale_color_manual(name="",values=c("Mean"="black", "Median"="red")) +
   theme_classic(base_size=8)
+
+# Save plot to output
+cairo_ps("../output/call_report_logassets.eps", width = 6.25, height = 4, pointsize = 12)
+print(avg_totalassets_plot)
+dev.off()
 
 sd_totalassets_plot <- ggplot(data=summ_stats_qtrly) +
   geom_line(aes(x=date, y=assets_sd), color="black") +
