@@ -163,190 +163,7 @@ dist_kurtosis <- list_extract(dist_stats, "dist_kurtosis")
 heterog_ts <- data.frame(date=dates, mean=dist_mean, median=dist_median, 
                          sd=dist_sd, skew=dist_skew, kurtosis=dist_kurtosis)
 
-# Plot aggregate bank heterogeneity
-recessions <- data.frame(nberDates())
-recessions <- recessions %>% 
-  mutate(Start = as.Date(as.character(Start), format="%Y%m%d"),
-         End = as.Date(as.character(End), format="%Y%m%d")) %>%
-  filter(Start >=dates[1])
-
-ggp <- ggplot(heterog_ts, aes(x=date, y=mean)) +
-  geom_line() + 
-  annotate("rect", xmin=recessions$Start, xmax=recessions$End, ymin=-Inf, ymax=Inf, alpha=0.2) +
-  labs(x="Date", y="Distance (Pairwise)", title="Aggregate Bank Heterogeneity") +
-  theme_classic(base_size=8)
-
-medplot <- ggplot(heterog_ts, aes(x=date, y=median)) +
-  geom_line() + 
-  annotate("rect", xmin=recessions$Start, xmax=recessions$End, ymin=-Inf, ymax=Inf, alpha=0.2) +
-  labs(x="Date", y="Distance (Pairwise)", title="Aggregate Bank Heterogeneity: Median") +
-  theme_classic(base_size=8)
-
-## Plot Federal Funds rate
-ffr <- macro_series_daily7 %>% 
-  mutate(qtrdate = lubridate::quarter(DATE, with_year=T), qtr=lubridate::quarter(DATE)) %>%
-  group_by(qtrdate, qtr) %>% 
-  summarise(ffr_mean = mean(DFF, na.rm=T),
-            ffr_med = median(DFF, na.rm=T),
-            ffr_max = max(DFF, na.rm=T),
-            ffr_min = min(DFF, na.rm=T)) %>%
-  mutate(year = floor(qtrdate),
-         month = qtr*3,
-         day = case_when(
-           month < 6  ~ 31,
-           month >= 6 & month < 9 ~ 30,
-           month >= 9 & month < 12 ~ 30,
-           TRUE ~ 31
-         ),
-         date = lubridate::ymd(paste(year, month, day, sep = "-"))
-  )
-
-xlimits = c(min(dates), max(dates))
-ffr_plot <- ggplot(data=ffr) +
-  geom_line(aes(x=date, y=ffr_mean), color="black") + 
-  geom_ribbon(aes(x=date, ymin=ffr_min, ymax=ffr_max), 
-              fill="purple", alpha=0.2) +
-  scale_x_date(limits=xlimits) + 
-  scale_y_continuous(limits=c(0,10)) +
-  labs(x="Date", y="Percent", title="Federal Funds Rate") +
-  annotate("rect", xmin=recessions$Start, xmax=recessions$End, ymin=-Inf, ymax=Inf, alpha=0.2) +
-  theme_classic(base_size=8)
-
-## Combine Heterogeneity and interest rate charts
-plot_list <- list(ggp, ffr_plot)
-heterog_plots <- ggarrange(plotlist = plot_list, ncol=1, nrow=2)
-cairo_ps("../output/bank_heterogeneity_pairwise.eps", width = 6.25, height = 4, pointsize = 12)
-print(heterog_plots)
-dev.off()
-
-## Additional Appendix charts
-sdplot <- ggplot(heterog_ts, aes(x=date, y=sd)) +
-  geom_line() + 
-  annotate("rect", xmin=recessions$Start, xmax=recessions$End, ymin=-Inf, ymax=Inf, alpha=0.2) +
-  labs(x="Date", y="S.D.", title="Aggregate Bank Heterogeneity") +
-  theme_classic(base_size=8)
-
-skewplot <- ggplot(heterog_ts, aes(x=date, y=skew)) +
-  geom_line() + 
-  annotate("rect", xmin=recessions$Start, xmax=recessions$End, ymin=-Inf, ymax=Inf, alpha=0.2) +
-  labs(x="Date", y="Skew", title="Aggregate Bank Heterogeneity") +
-  theme_classic(base_size=8)
-
-kurtplot <- ggplot(heterog_ts, aes(x=date, y=kurtosis)) +
-  geom_line() + 
-  annotate("rect", xmin=recessions$Start, xmax=recessions$End, ymin=-Inf, ymax=Inf, alpha=0.2) +
-  labs(x="Date", y="Kurtosis", title="Aggregate Bank Heterogeneity") +
-  theme_classic(base_size=8)
-
-other_moments_plot <- ggarrange(plotlist = list(medplot, sdplot, skewplot, kurtplot), 
-                                ncol=2, nrow=2,common.legend=T)
-
-cairo_ps("../output/bank_heterogeneity_pairwise_othermoments.eps", 
-         width = 6.25, height = 4, pointsize = 12)
-print(other_moments_plot)
-dev.off()
-
-##------------------------------------------------------##
-## VAR Regressions
-# Prepare macro quarterly data for merge
-macro_series_qtrly <- macro_series_qtrly %>% 
-  mutate(qtrdate = lubridate::quarter(DATE, with_year=T), 
-         qtr=lubridate::quarter(DATE)) %>%
-  mutate(year = floor(qtrdate),
-         month = qtr*3,
-         day = case_when(
-           month < 6  ~ 31,
-           month >= 6 & month < 9 ~ 30,
-           month >= 9 & month < 12 ~ 30,
-           TRUE ~ 31
-         ),
-         date = lubridate::ymd(paste(year, month, day, sep = "-")),
-         gdpgr=400*(GDPC1/lag(GDPC1)-1),
-         lgdp=log(GDPC1)
-  )
-
-cpi <- macro_series_monthly %>% 
-  mutate(qtrdate = lubridate::quarter(DATE, with_year=T), 
-         qtr=lubridate::quarter(DATE)) %>%
-  group_by(qtrdate, qtr) %>% 
-  summarise(cpi = mean(CPIAUCSL, na.rm=T)) %>%
-  ungroup() %>%
-  mutate(year = floor(qtrdate),
-         month = qtr*3,
-         day = case_when(
-           month < 6  ~ 31,
-           month >= 6 & month < 9 ~ 30,
-           month >= 9 & month < 12 ~ 30,
-           TRUE ~ 31
-         ),
-         date = lubridate::ymd(paste(year, month, day, sep = "-")),
-         infl = 400*(cpi/dplyr::lag(cpi)-1),
-         lcpi = log(cpi)
-  )
-
-# Combine aggregate data
-names(heterog_ts) <- c("date", "bank_heterog_m","bank_heterog_med", "bank_heterog_sd", 
-                       "bank_heterog_skew", "bank_heterog_kurt")
-agg_data <- left_join(heterog_ts, macro_series_qtrly, by=c("date"="date")) %>%
-  dplyr::select(-qtrdate, -qtr, -DATE, -year, -month, -day)
-agg_data <- left_join(agg_data, ffr, by=c("date"="date"))  %>%
-  dplyr::select(-qtrdate, -qtr, -year, -month, -day)
-agg_data <- left_join(agg_data, cpi, by=c("date"="date"))  %>%
-  dplyr::select(-qtrdate, -qtr, -year, -month, -day)
-agg_data <- agg_data %>% mutate(chg_bh_m = bank_heterog_m - lag(bank_heterog_m, 4),
-                                l_bh_m = log(bank_heterog_m))
-# Select variables for VAR model
-#var_data <- agg_data %>% dplyr::select(ffr_mean, gdpgr, infl, bank_heterog_m)
-var_data <- agg_data %>% dplyr::select(lgdp, lcpi, ffr_mean, l_bh_m)
-
-# Estimate VAR Model
-#vmodel <- VAR(var_data)
-vmodel <- VAR(var_data, p=4)
-
-# Impulse Response Functions
-irfs <- irf(vmodel, n.ahead=50)
-x_irf <- seq(1:51)-1
-# x_names <- c("FFR", "GDP Growth", "Inflation", "Heterogeneity")
-# y_mins <- c(-0.2, -1, -0.2, -0.0004)
-# y_maxs <- c(0.5, 2, 0.75, 0.0003)
-y_names <- c("Log Real GDP", "Log CPI", "FFR", "Heterogeneity")
-chart_names <- c("lgdp", "lcpi", "ffr", "heterog")
-y_mins <- c(-0.01, -0.01, -0.5, -.005)
-y_maxs <- c(0.02, 0.02, 0.75, 0.003)
-
-# Orthogonal responses to FFR, INFL, GDP GR
-for (i in 1:3){
-  cairo_ps(paste("../output/irfs_", chart_names[i],".eps", sep=""), width = 6.25, height = 6.25, pointsize = 12)
-  par(mfrow=c(2,2), mar = c(4,4,2,2))
-  for (j in 1:4){
-    graphics::plot(x=x_irf,y=irfs$irf[[i]][,j], type="l", xlab="Quarters", ylab=y_names[j], ylim=c(y_mins[j], y_maxs[j]))
-    lines(x=x_irf, y=irfs$Lower[[i]][,j], lty=2, col="red")
-    lines(x=x_irf, y=irfs$Upper[[i]][,j], lty=2, col="red")
-  }
-  dev.off()
-}
-
-# Orthogonal responses to Heterogeneity
-y_mins <- c(-0.01,-0.01, -0.5, -0.005)
-y_maxs <- c(0.02, 0.02, 0.5, 0.02)
-cairo_ps(paste("../output/irfs_", y_names[4],".eps", sep=""), width = 6.25, height = 6.25, pointsize = 12)
-par(mfrow=c(2,2), mar = c(4,4,2,2))
-for (j in 1:4){
-  graphics::plot(x=x_irf,y=irfs$irf[[4]][,j], type="l", xlab="Quarters", ylab=y_names[j], ylim=c(y_mins[j], y_maxs[j]))
-  lines(x=x_irf, y=irfs$Lower[[4]][,j], lty=2, col="red")
-  lines(x=x_irf, y=irfs$Upper[[4]][,j], lty=2, col="red")
-}
-dev.off()
-
-par(mfrow=c(1,1))
-cairo_ps("../output/ffr_heterog_pairwise_scatter.eps", width = 6.25, height = 6.25, pointsize = 12)
-ols_model <- lm(l_bh_m ~ ffr_mean, data=var_data)
-plot(x=var_data$ffr_mean, y=var_data$l_bh_m, pch=19, xlab="FFR", ylab="Log Bank Heterogeneity")
-abline(ols_model, col="red")
-dev.off()
-
-plot(x=var_data$ffr_mean, y=ols_model$residuals, pch=19)
-qqplot(x=var_data$ffr_mean, y=ols_model$residuals, pch=19)
+saveRDS(heterog_ts, file="../data/bank_heterogeneity_agg.rds")
 
 ##--------------------------------------------------------------------##
 ## Repeat analysis but without logassets and logliabilities
@@ -354,10 +171,10 @@ qqplot(x=var_data$ffr_mean, y=ols_model$residuals, pch=19)
 
 ## Select elements for each characteristic vector
 var_assets_dist_restrict <- c("cash_bal_due_depo","int_assets","other_assets",
-                     "sec","sec_htm","sec_afs","loans","trad_assets",
-                     "premis_fixed_asset","invest_uncon_sub")
+                              "sec","sec_htm","sec_afs","loans","trad_assets",
+                              "premis_fixed_asset","invest_uncon_sub")
 var_liabs_dist_restrict <- c("deposits","trad_liabs","other_borr_money",
-                    "sub_notes_deben","other_liabs")
+                             "sub_notes_deben","other_liabs")
 
 characteristics <- c(var_assets_dist_restrict, var_liabs_dist_restrict, 
                      var_secs94_dist, var_loans_dist)
@@ -369,23 +186,23 @@ doParallel::registerDoParallel(cl)
 
 # Loop to compute summary statistics on similarity
 dist_stats_restrict <- foreach (i= 1:length(dates), 
-                       .packages=c("tidyverse", "proxy", "moments"), 
-                       .combine=c) %dopar% {
-                         #for (i in 1:length(dates)){
-                         # Prepare data for distance function
-                         call_mat <- call_pctasst %>% filter(date == dates[i]) %>% select(all_of(characteristics))
-                         call_mat <- as.matrix(call_mat)
-                         # Compute pairwise distances
-                         dist <- proxy::as.matrix(proxy::dist(call_mat, method="Euclidean"))
-                         # Compute aggregate stats from pairwise
-                         list(
-                           dist_mean = mean(dist, na.rm = TRUE),
-                           dist_median = median(dist, na.rm = TRUE),
-                           dist_sd = sd(dist, na.rm = TRUE),
-                           dist_skew = skewness(colMeans(dist, na.rm = TRUE), na.rm = TRUE),
-                           dist_kurtosis = kurtosis(colMeans(dist, na.rm = TRUE), na.rm = TRUE)
-                         )
-                       }
+                                .packages=c("tidyverse", "proxy", "moments"), 
+                                .combine=c) %dopar% {
+                                  #for (i in 1:length(dates)){
+                                  # Prepare data for distance function
+                                  call_mat <- call_pctasst %>% filter(date == dates[i]) %>% select(all_of(characteristics))
+                                  call_mat <- as.matrix(call_mat)
+                                  # Compute pairwise distances
+                                  dist <- proxy::as.matrix(proxy::dist(call_mat, method="Euclidean"))
+                                  # Compute aggregate stats from pairwise
+                                  list(
+                                    dist_mean = mean(dist, na.rm = TRUE),
+                                    dist_median = median(dist, na.rm = TRUE),
+                                    dist_sd = sd(dist, na.rm = TRUE),
+                                    dist_skew = skewness(colMeans(dist, na.rm = TRUE), na.rm = TRUE),
+                                    dist_kurtosis = kurtosis(colMeans(dist, na.rm = TRUE), na.rm = TRUE)
+                                  )
+                                }
 
 parallel::stopCluster(cl) # Stop cluster
 
@@ -398,122 +215,9 @@ dist_kurtosis <- list_extract(dist_stats_restrict, "dist_kurtosis")
 
 # Create dataframe with summary statistics
 heterog_ts_restrict <- data.frame(date=dates, mean=dist_mean, median=dist_median, 
-                         sd=dist_sd, skew=dist_skew, kurtosis=dist_kurtosis)
+                                  sd=dist_sd, skew=dist_skew, kurtosis=dist_kurtosis)
 
-# Plot aggregate bank heterogeneity
-ggp <- ggplot(heterog_ts_restrict, aes(x=date, y=mean)) +
-  geom_line() + 
-  annotate("rect", xmin=recessions$Start, xmax=recessions$End, ymin=-Inf, ymax=Inf, alpha=0.2) +
-  labs(x="Date", y="Distance (Pairwise)", title="Aggregate Bank Heterogeneity") +
-  theme_classic(base_size=8)
-
-medplot <- ggplot(heterog_ts_restrict, aes(x=date, y=median)) +
-  geom_line() + 
-  annotate("rect", xmin=recessions$Start, xmax=recessions$End, ymin=-Inf, ymax=Inf, alpha=0.2) +
-  labs(x="Date", y="Distance (Pairwise)", title="Aggregate Bank Heterogeneity: Median") +
-  theme_classic(base_size=8)
-
-## Plot Federal Funds rate
-
-## Combine Heterogeneity and interest rate charts
-plot_list <- list(ggp, ffr_plot)
-heterog_plots <- ggarrange(plotlist = plot_list, ncol=1, nrow=2)
-cairo_ps("../output/bank_heterogeneity_pairwise_restrict.eps", width = 6.25, height = 4, pointsize = 12)
-print(heterog_plots)
-dev.off()
-
-## Additional Appendix charts
-sdplot <- ggplot(heterog_ts_restrict, aes(x=date, y=sd)) +
-  geom_line() + 
-  annotate("rect", xmin=recessions$Start, xmax=recessions$End, ymin=-Inf, ymax=Inf, alpha=0.2) +
-  labs(x="Date", y="S.D.", title="Aggregate Bank Heterogeneity") +
-  theme_classic(base_size=8)
-
-skewplot <- ggplot(heterog_ts_restrict, aes(x=date, y=skew)) +
-  geom_line() + 
-  annotate("rect", xmin=recessions$Start, xmax=recessions$End, ymin=-Inf, ymax=Inf, alpha=0.2) +
-  labs(x="Date", y="Skew", title="Aggregate Bank Heterogeneity") +
-  theme_classic(base_size=8)
-
-kurtplot <- ggplot(heterog_ts_restrict, aes(x=date, y=kurtosis)) +
-  geom_line() + 
-  annotate("rect", xmin=recessions$Start, xmax=recessions$End, ymin=-Inf, ymax=Inf, alpha=0.2) +
-  labs(x="Date", y="Kurtosis", title="Aggregate Bank Heterogeneity") +
-  theme_classic(base_size=8)
-
-other_moments_plot <- ggarrange(plotlist = list(medplot, sdplot, skewplot, kurtplot), 
-                                ncol=2, nrow=2,common.legend=T)
-
-cairo_ps("../output/bank_heterogeneity_pairwise_restrict_othermoments.eps", 
-         width = 6.25, height = 4, pointsize = 12)
-print(other_moments_plot)
-dev.off()
-
-##------------------------------------------------------##
-## VAR Regressions
-# Combine aggregate data
-names(heterog_ts_restrict) <- c("date", "bank_heterog_m","bank_heterog_med", "bank_heterog_sd", 
-                       "bank_heterog_skew", "bank_heterog_kurt")
-agg_data <- left_join(heterog_ts_restrict, macro_series_qtrly, by=c("date"="date")) %>%
-  dplyr::select(-qtrdate, -qtr, -DATE, -year, -month, -day)
-agg_data <- left_join(agg_data, ffr, by=c("date"="date"))  %>%
-  dplyr::select(-qtrdate, -qtr, -year, -month, -day)
-agg_data <- left_join(agg_data, cpi, by=c("date"="date"))  %>%
-  dplyr::select(-qtrdate, -qtr, -year, -month, -day)
-agg_data <- agg_data %>% mutate(chg_bh_m = bank_heterog_m - lag(bank_heterog_m, 4),
-                                l_bh_m = log(bank_heterog_m))
-# Select variables for VAR model
-#var_data <- agg_data %>% dplyr::select(ffr_mean, gdpgr, infl, bank_heterog_m)
-var_data <- agg_data %>% dplyr::select(lgdp, lcpi, ffr_mean, l_bh_m)
-
-# Estimate VAR Model
-#vmodel <- VAR(var_data)
-vmodel <- VAR(var_data, p=4)
-
-# Impulse Response Functions
-irfs <- irf(vmodel, n.ahead=50)
-x_irf <- seq(1:51)-1
-# x_names <- c("FFR", "GDP Growth", "Inflation", "Heterogeneity")
-# y_mins <- c(-0.2, -1, -0.2, -0.0004)
-# y_maxs <- c(0.5, 2, 0.75, 0.0003)
-y_names <- c("Log Real GDP", "Log CPI", "FFR", "Heterogeneity")
-chart_names <- c("lgdp", "lcpi", "ffr", "heterog")
-y_mins <- c(-0.01, -0.01, -0.5, -.005)
-y_maxs <- c(0.02, 0.02, 0.75, 0.003)
-
-# Orthogonal responses to FFR, INFL, GDP GR
-for (i in 1:3){
-  cairo_ps(paste("../output/irfs_restrict_", chart_names[i],".eps", sep=""), width = 6.25, height = 6.25, pointsize = 12)
-  par(mfrow=c(2,2), mar = c(4,4,2,2))
-  for (j in 1:4){
-    graphics::plot(x=x_irf,y=irfs$irf[[i]][,j], type="l", xlab="Quarters", ylab=y_names[j], ylim=c(y_mins[j], y_maxs[j]))
-    lines(x=x_irf, y=irfs$Lower[[i]][,j], lty=2, col="red")
-    lines(x=x_irf, y=irfs$Upper[[i]][,j], lty=2, col="red")
-  }
-  dev.off()
-}
-
-# Orthogonal responses to Heterogeneity
-y_mins <- c(-0.01,-0.01, -0.5, -0.005)
-y_maxs <- c(0.02, 0.02, 0.5, 0.02)
-cairo_ps(paste("../output/irfs_restrict_", y_names[4],".eps", sep=""), width = 6.25, height = 6.25, pointsize = 12)
-par(mfrow=c(2,2), mar = c(4,4,2,2))
-for (j in 1:4){
-  graphics::plot(x=x_irf,y=irfs$irf[[4]][,j], type="l", xlab="Quarters", ylab=y_names[j], ylim=c(y_mins[j], y_maxs[j]))
-  lines(x=x_irf, y=irfs$Lower[[4]][,j], lty=2, col="red")
-  lines(x=x_irf, y=irfs$Upper[[4]][,j], lty=2, col="red")
-}
-dev.off()
-
-par(mfrow=c(1,1))
-cairo_ps("../output/ffr_heterog_pairwise_restrict_scatter.eps", width = 6.25, height = 6.25, pointsize = 12)
-ols_model <- lm(l_bh_m ~ ffr_mean, data=var_data)
-plot(x=var_data$ffr_mean, y=var_data$l_bh_m, pch=19, xlab="FFR", ylab="Log Bank Heterogeneity")
-abline(ols_model, col="red")
-dev.off()
-
-plot(x=var_data$ffr_mean, y=ols_model$residuals, pch=19)
-qqplot(x=var_data$ffr_mean, y=ols_model$residuals, pch=19)
+saveRDS(heterog_ts_restrict, file="../data/bank_heterogeneity_restrict_agg.rds")
 
 ##-----------------------------------------------------------##
 ## Plot Distance Networks for select quarters
@@ -540,7 +244,4 @@ for(i in 1:4){
        edge.color="gray", vertex.label=NA, vertex.size=0.4, edge.size=0.1)
 }
 dev.off()
-
-
-
 

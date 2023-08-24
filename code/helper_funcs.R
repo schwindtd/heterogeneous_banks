@@ -22,3 +22,20 @@ list_extract <- function(x, name){
   z <- unlist(y)
   return(z)
 }
+
+# Function to compute running tally of low-for-long quarters
+cumsum_reset <- function(x) {
+  cumsum_value <- 0
+  result <- numeric(length(x))
+  
+  for (i in seq_along(x)) {
+    if (x[i] == 0) {
+      cumsum_value <- 0
+    } else {
+      cumsum_value <- cumsum_value + x[i]
+    }
+    result[i] <- cumsum_value
+  }
+  
+  return(result)
+}
